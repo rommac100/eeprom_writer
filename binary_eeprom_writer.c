@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 //Linux Headers
 #include <fcntl.h>
@@ -42,6 +43,7 @@ int main (int argc, char **argv)
 		if (open_serial(&serial_port, argv[2], &tty) == 0)
 		{
 			issue_test_comm(&serial_port);
+			write_binary_file(&serial_port, fp, bin_size_counter(argv[1]));
 			close(serial_port);
 		}
 
@@ -118,8 +120,15 @@ int issue_test_comm(int *serial_port)
 
 int write_binary_file(int *serial_port, FILE *fp, int size_bits)
 {
+	int size_bytes = size_bits%8 != 0 ? (((double) size_bits)/8.00)+1 : size_bits/8;
+	char *buffer_file =  (char*) malloc(sizeof(char)*size_bytes);
+	int bytes_read = fread(buffer_file, sizeof(char), size_bytes, fp);
+	
 	char buffer; 
-	write(*serial_port, "w", 1);
+	//write(*serial_port, "w", 1);
+	
+	
+	free(buffer_file);	
 	return 0;
 }
 
