@@ -21,8 +21,8 @@ void parse_serial();
 unsigned char read_at_addr(unsigned int addr);
 void short_delay();
 void write_at_addr(unsigned int, unsigned char);
-char get_bit(int, char);
-void page_write(int *, char *, int);
+char get_bit(unsigned int, unsigned char);
+void page_write(unsigned int *, unsigned char *, unsigned int);
 
 
 //Quick Macros for CNTRL Pins
@@ -89,19 +89,23 @@ void parse_serial()
 	else if (serial_buff == SERIAL_BLOCK_EEPROM)
 	{
 		Serial.println("block_writing eeprom");
-		int arr[2];
-		arr[0] = 0x0001;
-		arr[1] = 0x0002;
-		byte data[2];
-		data[0] = 0x25;
-		data[1] = 0x30;
-		page_write(arr,data,2);
+		unsigned int addr[64];
+		unsigned char data[64];
+		unsigned char i_data = 0;
+		unsigned char i;
+		for (i=0; i<64; i++)
+		{
+			addr[i] = i_data;
+			i_data = i_data != 255 ? i_data +1 : 0;
+		}
+			
+		page_write(addr,data,64);
 		Serial.println("finished writing block");
 	}
 }
 
 // simple get bit function. Note the datatypes that limit the data and index size
-char get_bit(int data, char index) { return index > 15 ? 0 : ((data & (1 << index)) >> index); }
+char get_bit(unsigned int data, unsigned char index) { return index > 15 ? 0 : ((data & (1 << index)) >> index); }
 
 //reads back eeprom data at the specified address (note address are capped to 15 as our chosen eeprom has that as max
 unsigned char read_at_addr(unsigned int addr)
@@ -146,7 +150,7 @@ void write_at_addr(unsigned int addr, unsigned char data)
 {
 	if (addr <= MAX_ADDR)
 	{
-		char i;
+		unsigned char i;
 		
 		for (i=0; i< 8; i++)
 			pinMode(eeprom_data_pins[i], OUTPUT);
@@ -174,7 +178,7 @@ void write_at_addr(unsigned int addr, unsigned char data)
 }
 
 // Follows waveform for page writes roughly. Note that the size has to be less than or equal to 64 to work properly.
-void page_write(int * address_arr, char * data_arr, int size)
+void page_write(unsigned int * address_arr, unsigned char * data_arr, unsigned int size)
 {
 	if (size <= 64)
 	{
@@ -185,7 +189,7 @@ void page_write(int * address_arr, char * data_arr, int size)
 		
 		for (i=0; i<8; i++)
 			pinMode(eeprom_data_pins[i], OUTPUT);
-
+		unsigned long init_time = millis();
 		for (i=0; i<size; i++)
 		{
 			for (j=0; j<15; j++)
@@ -201,8 +205,12 @@ void page_write(int * address_arr, char * data_arr, int size)
 			digitalWrite(_WE,1);
 			short_delay();
 		}
-			digitalWrite(_CE,1);
-			digitalWrite(_WE,1);
-			short_delay();
+		unsigned long end_time = millis();
+		Serial.print("Time difference (millis): ");
+		Serial.println(end_time-init_time);
+		digitalWrite(_CE,1);
+		digitalWrite(_WE,1);
+		short_delay();
 	}
+
 }
