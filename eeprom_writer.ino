@@ -1,9 +1,9 @@
 // Definitions for eeprom addr, data lines
 const byte eeprom_addr_pins[] = {22,24,26,28,30,32,34,36,38,40,42,44,46,48,50};
 const byte eeprom_data_pins[] = {23,25,27,29,31,33,35,37}; // Important additional pins for eeprom programming
-#define _CE 10 //chip enable active low
-#define _OE 9 //output enable active low
-#define _WE 8 //write enable active low
+#define _CE 9 //chip enable active low
+#define _OE 8 //output enable active low
+#define _WE 7 //write enable active low
 
 // Various Writing & Reading related Constants
 #define MAX_ADDR 0x7FFF
@@ -15,6 +15,16 @@ const byte eeprom_data_pins[] = {23,25,27,29,31,33,35,37}; // Important addition
 #define SERIAL_CLEAR_EEPROM 0x63
 #define SERIAL_TEST_EEPROM 116
 #define SERIAL_BLOCK_EEPROM 'b'
+
+
+#define SET_WE() (PORTH |= (1 << 4))
+#define CLR_WE() (PORTH &= ~(1 << 4))
+
+#define SET_OE() (PORTH |= (1 << 5))
+#define CLR_OE() (PORTH &= ~(1 <<5))
+
+#define SET_CE() (PORTH |= (1 <<6))
+#define CLR_CE() (PORTH &= (~(1 <<6)))
 
 // declarations of functions
 void parse_serial();
@@ -79,7 +89,7 @@ void parse_serial()
 	else if (serial_buff == SERIAL_WRITE_EEPROM)
 	{
 		Serial.println("writing to eeprom");
-		write_at_addr(0x0005, 0x58);
+		write_at_addr(0x0002, 0x59);
 		Serial.println("Finished Writing");
 	}
 	else if (serial_buff == SERIAL_CLEAR_EEPROM)
@@ -122,14 +132,12 @@ unsigned char read_at_addr(unsigned int addr)
 			digitalWrite(eeprom_addr_pins[i],get_bit(addr, i));
 		for (i=0; i< 8; i++)
 			pinMode(eeprom_data_pins[i], INPUT);
-		short_delay();
 		digitalWrite(_OE, 0);
-		short_delay();
-		short_delay();
-		short_delay();
 		short_delay();
 		for (i=0; i<8; i++)
 			buff |= digitalRead(eeprom_data_pins[i]) <<i;
+		short_delay();
+		short_delay();
 		short_delay();
 		digitalWrite(_OE,1);
 		digitalWrite(_CE,1);
@@ -144,6 +152,8 @@ void short_delay()
 {
   __asm__("nop\n\t"); 
 }
+
+
 
 //somewhat follows the recommend write waveform. Will need to be tested
 void write_at_addr(unsigned int addr, unsigned char data)
@@ -176,6 +186,7 @@ void write_at_addr(unsigned int addr, unsigned char data)
 		short_delay();
 	}
 }
+
 
 // Follows waveform for page writes roughly. Note that the size has to be less than or equal to 64 to work properly.
 void page_write(unsigned int * address_arr, unsigned char * data_arr, unsigned int size)
