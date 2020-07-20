@@ -14,6 +14,7 @@ const byte eeprom_data_pins[] = {23,25,27,29,31,33,35,37}; // Important addition
 #define SERIAL_WRITE_EEPROM 0x77 
 #define SERIAL_CLEAR_EEPROM 0x63
 #define SERIAL_TEST_EEPROM 116
+#define SERIAL_BLOCK_EEPROM 'b'
 
 // declarations of functions
 void parse_serial();
@@ -21,6 +22,8 @@ unsigned char read_at_addr(unsigned int addr);
 void short_delay();
 void write_at_addr(unsigned int, unsigned char);
 char get_bit(int, char);
+void page_write(int *, char *, int);
+
 
 //Quick Macros for CNTRL Pins
 
@@ -67,7 +70,7 @@ void parse_serial()
 	else if (serial_buff == SERIAL_READ_EEPROM)
 	{
 		Serial.println("Reading from eeprom");
-		char output = read_at_addr(0x0005);
+		char output = read_at_addr(0x0002);
 		Serial.println("finished reading");
 		Serial.print(output, HEX);
 		Serial.println(" value obtained");
@@ -82,6 +85,18 @@ void parse_serial()
 	else if (serial_buff == SERIAL_CLEAR_EEPROM)
 	{
 		Serial.println("clearing eeprom");
+	}
+	else if (serial_buff == SERIAL_BLOCK_EEPROM)
+	{
+		Serial.println("block_writing eeprom");
+		int arr[2];
+		arr[0] = 0x0001;
+		arr[1] = 0x0002;
+		byte data[2];
+		data[0] = 0x25;
+		data[1] = 0x30;
+		page_write(arr,data,2);
+		Serial.println("finished writing block");
 	}
 }
 
@@ -138,11 +153,11 @@ void write_at_addr(unsigned int addr, unsigned char data)
 		
 		for (i=0; i< 15; i++)
 		{
-			digitalWrite(eeprom_addr_pins[i], bitRead(addr,i));
+			digitalWrite(eeprom_addr_pins[i], get_bit(addr,i));
 		}
 		for (i=0; i<8; i++)
 		{
-			digitalWrite(eeprom_data_pins[i], bitRead(data, i));
+			digitalWrite(eeprom_data_pins[i], get_bit(data, i));
 		}
 
 		digitalWrite(_OE, 1);
@@ -155,5 +170,39 @@ void write_at_addr(unsigned int addr, unsigned char data)
 		digitalWrite(_CE, 1);
 		digitalWrite(_WE, 1);
 		short_delay();
+	}
+}
+
+// Follows waveform for page writes roughly. Note that the size has to be less than or equal to 64 to work properly.
+void page_write(int * address_arr, char * data_arr, int size)
+{
+	if (size <= 64)
+	{
+		char i,j;
+		digitalWrite(_OE,1);
+		digitalWrite(_CE,1);
+		digitalWrite(_WE,1);
+		
+		for (i=0; i<8; i++)
+			pinMode(eeprom_data_pins[i], OUTPUT);
+
+		for (i=0; i<size; i++)
+		{
+			for (j=0; j<15; j++)
+				digitalWrite(eeprom_addr_pins[j], get_bit(address_arr[i],j));
+			for (j=0; j<8; j++)
+				digitalWrite(eeprom_data_pins[j], get_bit(data_arr[i], j));
+			short_delay();
+			digitalWrite(_CE,0);
+			digitalWrite(_WE,0);
+			short_delay();
+			short_delay();
+			digitalWrite(_CE,1);
+			digitalWrite(_WE,1);
+			short_delay();
+		}
+			digitalWrite(_CE,1);
+			digitalWrite(_WE,1);
+			short_delay();
 	}
 }
