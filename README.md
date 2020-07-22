@@ -10,5 +10,5 @@ gcc -Wall binary_eeprom_writer.c -o binary_eeprom_writer
 # Running Instructions:
 Effectively, there are two commandline arguments the binary file path, and the serial device path. And sense you have to use serial device make sure you have the proper permissions to do so as a normal user or execute the below command temporarily with root privileges.
 ```bash
-./binary_eeprom_writer
+./binary_eeprom_writer [binary file] [serial device path]
 ```
