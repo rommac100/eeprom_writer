@@ -9,13 +9,18 @@ const byte eeprom_data_pins[] = {23,25,27,29,31,33,35,37}; // Important addition
 #define MAX_ADDR 0x7FFF
 #define MAX_PAGE_WRITE_SIZE 64
 
-// Serial Commands for user:
-#define SERIAL_READ_EEPROM 0x72 
-#define SERIAL_WRITE_EEPROM 0x77 
-#define SERIAL_CLEAR_EEPROM 0x63
-#define SERIAL_TEST_EEPROM 116
-#define SERIAL_BLOCK_EEPROM 'b'
+#define MAX_BLOCK_BYTE_TRANSFER 32
 
+// Serial Commands for user:
+#define SERIAL_READ_EEPROM 'r' 
+#define SERIAL_WRITE_EEPROM 'w' 
+#define SERIAL_CLEAR_EEPROM 'c'
+#define SERIAL_TEST_EEPROM 't'
+#define SERIAL_BLOCK_EEPROM 'l'
+#define SERIAL_BINARY_EEPROM 'b'
+
+// short 62.5ns delay
+#define NOP __asm__ __volatile__ ("nop\n\t")
 
 #define SET_WE() (PORTH |= (1 << 4))
 #define CLR_WE() (PORTH &= ~(1 << 4))
@@ -29,11 +34,15 @@ const byte eeprom_data_pins[] = {23,25,27,29,31,33,35,37}; // Important addition
 // declarations of functions
 void parse_serial();
 unsigned char read_at_addr(unsigned int addr);
-void short_delay();
 void write_at_addr(unsigned int, unsigned char);
 char get_bit(unsigned int, unsigned char);
 void page_write(unsigned int *, unsigned char *, unsigned int);
+byte* data_polling(unsigned int *, int);
 
+union size{
+	unsigned int data;
+	unsigned char data_char[2];
+};
 
 //Quick Macros for CNTRL Pins
 
@@ -73,14 +82,13 @@ void loop() {
 }
 
 // parses the serial input appropriately and calls the associated functions
-void parse_serial()
-{
+void parse_serial() {
 	if (serial_buff == SERIAL_TEST_EEPROM)
 		Serial.println("d");
 	else if (serial_buff == SERIAL_READ_EEPROM)
 	{
 		Serial.println("Reading from eeprom");
-		char output = read_at_addr(0x0002);
+		char output = read_at_addr(0x0001);
 		Serial.println("finished reading");
 		Serial.print(output, HEX);
 		Serial.println(" value obtained");
@@ -89,7 +97,7 @@ void parse_serial()
 	else if (serial_buff == SERIAL_WRITE_EEPROM)
 	{
 		Serial.println("writing to eeprom");
-		write_at_addr(0x0002, 0x59);
+		write_at_addr(0x0001, 'b');
 		Serial.println("Finished Writing");
 	}
 	else if (serial_buff == SERIAL_CLEAR_EEPROM)
@@ -99,58 +107,137 @@ void parse_serial()
 	else if (serial_buff == SERIAL_BLOCK_EEPROM)
 	{
 		Serial.println("block_writing eeprom");
-		unsigned int addr[64];
-		unsigned char data[64];
-		unsigned char i_data = 0;
-		unsigned char i;
-		for (i=0; i<64; i++)
-		{
-			addr[i] = i_data;
-			i_data = i_data != 255 ? i_data +1 : 0;
-		}
-			
-		page_write(addr,data,64);
+		unsigned int addr[] = {0,1};
+		unsigned char data[] = {1,3};
+		
+		page_write(addr,data,2);
 		Serial.println("finished writing block");
 	}
+	
+	/* Effectively, the procedure here is that that host machine sends a binary write command request (sending char 'b').
+	  Then the client receives the size and parses it and resends it to the host. 
+	  The Host compares the two values (inital and after transfer) it then sends a 'y' or 'n' to say whether or not to continue with the transfer.
+	  It then begins to bit stream typically 32 bytes at a time untill the 32 bytes are no longer possible. The client is prepared for this change since it knows the total transfer size and adjust accordingly. 
+	  for each 32 byte segment of transfer, the host machine must wait for ready flag from the machine to verify that it is ready for the next packet (prevent the input FIFO from overflowing)
+	*/
+	else if (serial_buff == SERIAL_BINARY_EEPROM)
+	{
+		// Effectively, the binary write will pull 32 bytes at max at time. This means if the binary isn't perfectly divisble. Then the last chuck of will contain the not 32 byte count.
+		union size size_trans;
+		unsigned char i, j;
+
+		for (i=0; i< 2; i++)
+		{
+		        while(!Serial.available());
+			size_trans.data_char[i] = Serial.read();
+		}
+		for (i=0; i<2; i++)
+			Serial.write(size_trans.data_char[i]);
+		while(!Serial.available()); // wait for the next byte transfer of verification.
+		if (Serial.read() == 'y') // proceed with block writing
+		{
+			size_trans.data = 2;
+			unsigned int block_count = size_trans.data/MAX_BLOCK_BYTE_TRANSFER; 
+			unsigned char data_block[MAX_BLOCK_BYTE_TRANSFER];
+			int addr_arr[MAX_BLOCK_BYTE_TRANSFER];
+			for (i=0; i< block_count; i++)
+			{
+				for (j=0; j<MAX_BLOCK_BYTE_TRANSFER; j++)
+					addr_arr[j] = block_count*i+j;
+				Serial.write('r'); //send ready transfer to send the information
+				for (j=0; j<MAX_BLOCK_BYTE_TRANSFER; j++)
+				{
+					while (!Serial.available());
+					data_block[j] = Serial.read();
+				}
+				page_write(addr_arr, data_block, MAX_BLOCK_BYTE_TRANSFER);
+			}
+			unsigned int last_block = size_trans.data-32*block_count;
+			if (last_block > 0)
+			{
+				for (i=0; i<last_block; i++)
+				{
+					addr_arr[i] = 32*block_count+i;
+					Serial.print("Address: ");
+					Serial.println(addr_arr[i]);
+				}
+				Serial.write('r');
+				for (i=0; i<last_block; i++)
+				{
+					while (!Serial.available());
+					data_block[i] = Serial.read();	
+					Serial.print("data received");
+					Serial.println(data_block[i]);
+				}
+				page_write(addr_arr, data_block, last_block);
+			}
+			Serial.println("finished transfer");
+		}
+	}
+			
 }
+
 
 // simple get bit function. Note the datatypes that limit the data and index size
 char get_bit(unsigned int data, unsigned char index) { return index > 15 ? 0 : ((data & (1 << index)) >> index); }
 
+byte* data_polling(unsigned int * addr_arr, int size)
+{
+	//alloc polling data
+	char * data_arr = (char *) malloc(sizeof(char)*size);
+	char i;
+	
+	//checks to make sure none of the addresses exceed the max_address size, returns null if any addresses are too big.
+	for (i =0; i< size; i++)
+	{
+		if (addr_arr[i] > MAX_ADDR)
+		{
+			free(data_arr);
+			return NULL;
+		}
+	}
+	
+			
+
+
+}
+
 //reads back eeprom data at the specified address (note address are capped to 15 as our chosen eeprom has that as max
+//Note this still has some problems with wrong bits being read. More tuning is needed.
 unsigned char read_at_addr(unsigned int addr)
 {
 	if (addr < MAX_ADDR)
 	{
 		char i;
 		char buff = 0;
-		digitalWrite(_OE,1);
-		digitalWrite(_WE,1);
-		digitalWrite(_CE,0);
+		SET_OE();
+		SET_WE();
+		CLR_CE();
+	//	digitalWrite(_OE,1);
+	//	digitalWrite(_WE,1);
+	//	digitalWrite(_CE,0);
 
 		for (i=0; i< 15; i++)
 			digitalWrite(eeprom_addr_pins[i],get_bit(addr, i));
 		for (i=0; i< 8; i++)
 			pinMode(eeprom_data_pins[i], INPUT);
-		digitalWrite(_OE, 0);
-		short_delay();
+		CLR_OE();	
+	//	digitalWrite(_OE, 0);
+		NOP;
+		delay(9);
 		for (i=0; i<8; i++)
 			buff |= digitalRead(eeprom_data_pins[i]) <<i;
-		short_delay();
-		short_delay();
-		short_delay();
-		digitalWrite(_OE,1);
-		digitalWrite(_CE,1);
-		short_delay();
+		NOP;
+		NOP;
+		NOP;
+		SET_OE();
+		SET_CE();
+		NOP;
+		delay(2);
 		return buff;
 	}
 	return 0;
 		
-}
-// in theory the nop instruction takes roughly 62.5ns on 16 mhz based arduino so this is the best resolution that can be given as delay
-void short_delay()
-{
-  __asm__("nop\n\t"); 
 }
 
 
@@ -174,16 +261,21 @@ void write_at_addr(unsigned int addr, unsigned char data)
 			digitalWrite(eeprom_data_pins[i], get_bit(data, i));
 		}
 
-		digitalWrite(_OE, 1);
-		digitalWrite(_CE, 0);
-		digitalWrite(_WE, 0);
-		short_delay();
-		short_delay();
-		short_delay();
+		SET_OE();
+		CLR_CE();
+		CLR_WE();	
+	//	digitalWrite(_OE, 1);
+	//	digitalWrite(_CE, 0);
+	//	digitalWrite(_WE, 0);
+		NOP;
+		NOP;
+		NOP;
 		
-		digitalWrite(_CE, 1);
-		digitalWrite(_WE, 1);
-		short_delay();
+		SET_CE();
+		SET_WE();
+		//digitalWrite(_CE, 1);
+		//digitalWrite(_WE, 1);
+		NOP;
 	}
 }
 
@@ -194,6 +286,7 @@ void page_write(unsigned int * address_arr, unsigned char * data_arr, unsigned i
 	if (size <= 64)
 	{
 		char i,j;
+		
 		digitalWrite(_OE,1);
 		digitalWrite(_CE,1);
 		digitalWrite(_WE,1);
@@ -207,21 +300,21 @@ void page_write(unsigned int * address_arr, unsigned char * data_arr, unsigned i
 				digitalWrite(eeprom_addr_pins[j], get_bit(address_arr[i],j));
 			for (j=0; j<8; j++)
 				digitalWrite(eeprom_data_pins[j], get_bit(data_arr[i], j));
-			short_delay();
+			NOP;
 			digitalWrite(_CE,0);
 			digitalWrite(_WE,0);
-			short_delay();
-			short_delay();
+			NOP;
+			NOP;
 			digitalWrite(_CE,1);
 			digitalWrite(_WE,1);
-			short_delay();
+			NOP;
 		}
 		unsigned long end_time = millis();
 		Serial.print("Time difference (millis): ");
 		Serial.println(end_time-init_time);
 		digitalWrite(_CE,1);
 		digitalWrite(_WE,1);
-		short_delay();
+		NOP;
 	}
 
 }
